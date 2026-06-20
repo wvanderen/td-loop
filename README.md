@@ -17,6 +17,7 @@ scripts/
   record_human_uat.py    # structured human-UAT resume evidence (no third-party deps)
   review_close_path.py   # resolve td review mode → exact approve/close commands
   handoff_required.py    # require structured handoff content (done/remaining/decisions/uncertain) before review
+  browser_uat_isolation.py # resolve a clean-state strategy (clean-context/reset/unique-data/escalate) for persisted-state browser UAT
 ```
 
 ## What the loop guarantees
@@ -48,6 +49,13 @@ scripts/
   `scripts/handoff_required.py` detects whether `td handoff` supports the
   structured flags and verifies them, falling back to Done/Remaining/Decisions/
   Uncertain sections in the review reason on older td.
+- **Persisted-state browser UAT starts from a clean state**: reload-persistence
+  workflows (localStorage/sessionStorage/IndexedDB) resolve the strongest
+  isolation the browser surface supports — clean-context, storage reset, or
+  unique test data — and escalate to human UAT when none is available, never
+  asserting against storage that may carry rows from a previous run (the
+  validation run's duplicate "Coffee beans" rows). See
+  `scripts/browser_uat_isolation.py`.
 
 ## Install (global, any machine)
 

@@ -30,6 +30,7 @@ Manual agent sessions (a human driving Codex/Pi/OpenCode directly) are not spawn
    - Prefer browser automation for web apps.
    - Use computer use when browser automation is impossible but GUI verification is possible.
    - Capture or inspect screenshots when visual state matters, and persist them with the artifact strategy below (never leave screenshot evidence only in a temp location).
+   - For workflows that assert state survives a reload (localStorage/sessionStorage/IndexedDB), resolve a clean-state isolation strategy first and record it — see **Persisted-State Browser UAT**.
    - Confirm the exact workflow named by the td issue, not just a nearby smoke test.
 8. If UAT cannot be performed, pause the loop:
    - Add a `human-uat-required` label while preserving existing labels.
@@ -101,6 +102,43 @@ Handle the common failure mode where a browser runtime **emits** a screenshot to
 4. If an expected screenshot is missing entirely, record `saved: false`, `tool_emitted: false`, with a note that UAT is unverifiable until a screenshot is captured.
 
 Prefer a `scripts/record_uat_evidence.py`-style helper (copy, never move, so failed runs are retryable) and gate review submission with its `--strict` flag. The fixture at `td-loop-skill-validation` ships a reference implementation and a full spec in `docs/ARTIFACT_STRATEGY.md`.
+
+## Persisted-State Browser UAT
+
+When a workflow asserts that state **survives a reload** (localStorage / sessionStorage / IndexedDB, cookies, a cart or list that should persist across navigation), the UAT is only meaningful if it starts from a **known clean state**. The validation run hit this directly: its reload-persistence UAT accumulated duplicate "Coffee beans" rows across runs because the in-app browser surface could not reset localStorage, so both a correct implementation and a no-op left rows visible and the assertion stopped proving anything about the new code. Never assert against persisted storage that may carry data over from a previous run.
+
+Before driving the workflow, resolve the strongest isolation strategy the browser surface actually supports and record it as evidence. `scripts/browser_uat_isolation.py` does both: it never mutates browser state from the CLI, but it picks the best strategy the declared `--surface` permits, emits the exact JS / commands to execute it, and writes a `browser-uat.json` manifest (schema `td-loop.browser-uat-isolation/v1`, appended to the issue's `evidence.log`) so a reviewer can confirm the UAT ran clean.
+
+Strategies, strongest first — pick the first the surface can deliver:
+
+1. **`clean-context`** — open a throwaway browser context / user-data-dir so storage starts empty (Playwright `newContext()`, Puppeteer `--user-data-dir`, Chrome `--user-data-dir $(mktemp -d)`). Preferred when the runtime supports it. Close the throwaway context afterward so it cannot leak into the next run.
+2. **`reset`** — the surface can evaluate JS but cannot open a fresh profile, so inject the helper's emitted reset snippet (`localStorage.clear()`, `sessionStorage.clear()`, named `removeItem` keys, and `indexedDB.deleteDatabase(name)` for any `--indexed-db` databases) and reload **before** the workflow. Pass `--reset-keys k1,k2` and `--indexed-db name` to scope it when the app shares the origin; otherwise the snippet clears all local/session storage. IndexedDB deletion is async — reload only after the success event fires.
+3. **`unique-data`** — neither isolation nor reset is available, so tag the test data with the helper's per-run token (e.g. `Coffee beans UAT-20260620T015030Z-e0ba`) and assert on that exact token after reload, so accumulated rows cannot create a false pass. This is the **weakest acceptable** strategy: it does not clean state, it only disambiguates. If the app dedupes by label, it is insufficient — escalate instead.
+4. **`escalate`** — no clean-state path is available and the persisted state is required to verify the workflow. Do **not** assert against polluted storage. Block for human UAT (label `human-uat-required`) and name "clean browser profile or explicit storage reset" as the required human capability in the block comment, then resume through the **Human Escalation Protocol**.
+
+Resolve and record before the workflow:
+
+```bash
+# The runtime can open a fresh profile/context:
+python3 scripts/browser_uat_isolation.py --issue <id> \
+  --workflow "reload persistence" --surface clean-context --json
+
+# Can evaluate JS but not open a fresh profile:
+python3 scripts/browser_uat_isolation.py --issue <id> \
+  --workflow "reload persistence" --surface reset \
+  --reset-keys cart,beans --indexed-db beansDB --origin http://localhost:3000 --json
+
+# Only able to vary input data:
+python3 scripts/browser_uat_isolation.py --issue <id> \
+  --workflow "reload persistence" --surface unique-data \
+  --data-label "Coffee beans" --json
+
+# Nothing available and state is required — gate the UAT (strict exits non-zero):
+python3 scripts/browser_uat_isolation.py --issue <id> \
+  --workflow "reload persistence" --surface none --json --strict
+```
+
+Reference the manifest path in the `td review --reason` and `td handoff` so a reviewer can find the chosen strategy. Treat `escalate` under `--strict` as "do not submit until a clean-state path exists or a human unblocks" — the same gate as `block_on_unverifiable` for screenshots.
 
 ## Human Escalation Protocol
 

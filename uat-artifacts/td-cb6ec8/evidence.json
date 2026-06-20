@@ -1,0 +1,78 @@
+{
+  "schema": "td-loop.uat-evidence/v1",
+  "issue_id": "td-cb6ec8",
+  "workflow": "Before driving a persisted-state browser workflow (e.g. reload persistence), the loop resolves the strongest clean-state isolation the surface supports and records it as evidence, never asserting against storage that may carry rows from a previous run (the validation run's duplicate Coffee beans rows)",
+  "tool": "cli",
+  "result": "pass",
+  "steps": [
+    {
+      "label": "compile",
+      "action": "python3 -m py_compile scripts/browser_uat_isolation.py",
+      "result": "compiles clean; executable bit set, consistent with review_close_path.py / handoff_required.py / record_human_uat.py"
+    },
+    {
+      "label": "clean-context-surface",
+      "action": "browser_uat_isolation.py --surface clean-context --json --no-write",
+      "result": "strategy=clean-context; reset_snippet=None; plan names Playwright newContext / Puppeteer --user-data-dir / Chrome --user-data-dir $(mktemp -d) and closing the throwaway context"
+    },
+    {
+      "label": "reset-surface-named-keys-and-indexeddb",
+      "action": "browser_uat_isolation.py --surface reset --reset-keys cart,beans --indexed-db beansDB --origin http://localhost:3000 --json --no-write",
+      "result": "strategy=reset; reset_snippet emits localStorage.clear(), sessionStorage.clear(), removeItem('cart'/'beans'), indexedDB.deleteDatabase('beansDB'), location.reload(); warns IndexedDB delete is async"
+    },
+    {
+      "label": "unique-data-surface",
+      "action": "browser_uat_isolation.py --surface unique-data --data-label 'Coffee beans' --json --no-write",
+      "result": "strategy=unique-data; generates per-run token (e.g. 20260620T015030Z-e0ba); plan instructs asserting on 'Coffee beans UAT-<token>' so accumulated rows cannot create a false pass; flags dedup-on-label as insufficient"
+    },
+    {
+      "label": "escalate-under-strict-exits-nonzero",
+      "action": "browser_uat_isolation.py --surface none --json --strict --no-write; echo exit=$?",
+      "result": "strategy=escalate; plan says block for human UAT and name 'clean browser profile or explicit storage reset' as required capability; exit code 1 — the gate the loop needs so it does not submit against polluted storage"
+    },
+    {
+      "label": "escalate-without-strict-exits-zero",
+      "action": "browser_uat_isolation.py --surface none --no-write >/dev/null; echo exit=$?",
+      "result": "exit code 0 — planning/dry-run path does not hard-fail, only --strict gates"
+    },
+    {
+      "label": "strategy-override-honored",
+      "action": "--surface reset --strategy unique-data --json --no-write",
+      "result": "strategy=unique-data; source notes 'override (--strategy); surface=reset' — operator can pin a weaker strategy when intentionally avoiding reset"
+    },
+    {
+      "label": "strategy-downgrade-when-surface-too-weak",
+      "action": "--surface none --strategy clean-context --json --no-write",
+      "result": "downgrades to escalate with WARNING 'clean-context requires surface clean-context but surface is none; downgrading' — manifest never claims an isolation the browser cannot deliver"
+    },
+    {
+      "label": "manifest-write-and-evidence-log-append",
+      "action": "two consecutive writes against a temp artifacts-dir; inspect browser-uat.json + evidence.log",
+      "result": "writes uat-artifacts/<issue>/browser-uat.json (latest) and appends one JSON line per run to evidence.log (2 lines after 2 runs); on-disk manifest stays clean (manifest_path added to descriptor only AFTER write)"
+    },
+    {
+      "label": "issue-id-guard",
+      "action": "browser_uat_isolation.py --issue '../etc' --workflow x --surface none",
+      "result": "rejects path-separator issue id; exit 1 — prevents escaping the per-issue artifact dir, matching record_human_uat.py"
+    },
+    {
+      "label": "prose-fix-skill",
+      "action": "grep SKILL.md '## Persisted-State Browser UAT' + Loop Contract step 7 cross-reference",
+      "result": "new section present after Screenshot Artifact Strategy; step 7 bullet added pointing reload-persistence workflows at it; escalate routes into Human Escalation Protocol"
+    },
+    {
+      "label": "prose-fix-readme-and-config",
+      "action": "grep README.md 'browser_uat_isolation.py' + 'Persisted-state browser UAT starts from a clean state'; grep references/config.md loop-guarantee note",
+      "result": "helper listed in layout; guarantee bullet added alongside the sibling follow-up guarantees; config.md notes it as a loop guarantee (not a config knob), mirroring the handoff guarantee note"
+    }
+  ],
+  "artifacts": [],
+  "notes": [
+    "UAT is CLI/functional: this issue changes a Codex skill's guidance + adds a no-deps helper script. There is no live browser surface to drive in this repo, so the failure mode (validation: reload persistence UAT accumulated duplicate Coffee beans rows because localStorage reset was unavailable) is addressed by resolving+recording a strategy deterministically and gating on --strict rather than by running a browser workflow.",
+    "The helper deliberately NEVER mutates browser state from the CLI (it cannot); it emits the exact JS/commands and records the chosen strategy, mirroring review_close_path.py (resolve a path) + record_human_uat.py (write evidence).",
+    "install.sh uses cp -R of the repo, so scripts/browser_uat_isolation.py ships with the skill; executable bit set, consistent with the other helpers.",
+    "Strategy precedence encodes 'strongest acceptable isolation first' (clean-context > reset > unique-data > escalate), matching the acceptance criteria's three named options plus a human-escalation fallback when none is available."
+  ],
+  "recorded_at": "2026-06-19T20:55:00-05:00",
+  "recorded_by_session": "ses_979484"
+}
