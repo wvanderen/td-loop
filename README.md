@@ -1,10 +1,13 @@
 # td-loop
 
-A Codex skill that runs a stateful [`td`](https://github.com/marcus/td) backlog
-execution loop: work down the critical path one issue at a time, with UAT
-verification gates, browser/computer-use screenshot evidence, explicit
-human-escalation pauses when acceptance workflows cannot be verified, and
-review-policy-aware close semantics.
+An [Agent Skills](https://agentskills.io/specification)–standard skill that runs
+a stateful [`td`](https://github.com/marcus/td) backlog execution loop: work down
+the critical path one issue at a time, with UAT verification gates,
+browser/computer-use screenshot evidence, explicit human-escalation pauses when
+acceptance workflows cannot be verified, and review-policy-aware close
+semantics. Any compliant harness can load it — confirmed in **Codex** and
+**pi**; other Agent-Skills loaders (e.g. opencode) should work if they implement
+the standard.
 
 ## Layout
 
@@ -60,29 +63,53 @@ scripts/
 
 ## Install (global, any machine)
 
-`install.sh` copies the skill into `$CODEX_HOME/skills/td-loop` (default
-`~/.codex/skills/td-loop`) so Codex discovers it on next start. Idempotent: it
-refuses to clobber a directory that isn't this skill.
+`install.sh` copies the skill into a harness skill directory so the agent
+discovers it on next start. It targets any Agent-Skills-standard loader —
+**Codex**, **pi**, or the harness-neutral `~/.agents/skills/` (scanned by pi
+and any compliant loader). Idempotent: it safely replaces a previous install of
+this skill and refuses to clobber a directory that belongs to a different skill.
 
 ```sh
-./install.sh
-# or into a non-default Codex home:
-CODEX_HOME=/opt/codex ./install.sh
+./install.sh                      # default: all three targets below
+./install.sh --target codex       # $CODEX_HOME/skills/        (default ~/.codex/skills)
+./install.sh --target pi          # $PI_HOME/agent/skills/     (default ~/.pi/agent/skills)
+./install.sh --target agents      # $AGENTS_HOME/skills/       (default ~/.agents/skills, harness-neutral)
+./install.sh --target all         # install into all three (default)
 ```
 
-Restart Codex to pick up the skill.
+Override the install root per target with an env var:
+
+```sh
+CODEX_HOME=/opt/codex   ./install.sh --target codex
+PI_HOME=/custom/pi      ./install.sh --target pi
+AGENTS_HOME=/opt/agents ./install.sh --target agents
+```
+
+Restart your agent harness to pick up the skill.
+
+### Point pi at an existing Codex install
+
+If you already keep skills in `~/.codex/skills`, pi can load them with no second
+copy — add the directory to pi settings:
+
+```json
+{ "skills": ["~/.codex/skills"] }
+```
 
 ## Develop on this machine (live edits)
 
 For active development, symlink the install target at this repo so edits are
-immediately live in Codex (no copy step):
+immediately live (no copy step). Pick the target(s) for the harness(es) you run
+(run from inside the td-loop repo):
 
 ```sh
-ln -s "$PWD/td-loop" ~/.codex/skills/td-loop   # run from ~/dev
+ln -s "$PWD" ~/.codex/skills/td-loop      # Codex
+ln -s "$PWD" ~/.pi/agent/skills/td-loop   # pi
+ln -s "$PWD" ~/.agents/skills/td-loop     # harness-neutral (pi + compliant loaders)
 ```
 
-If `~/.codex/skills/td-loop` already exists as a copied install, remove it
-first (`rm -rf ~/.codex/skills/td-loop`) then run the `ln -s` above.
+If a target already exists as a copied install, remove it first
+(`rm -rf <target>/td-loop`) then run the `ln -s` above.
 
 ## Validate a td-loop config
 
