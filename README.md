@@ -14,6 +14,7 @@ agents/openai.yaml      # Codex UI metadata
 references/config.md    # td-loop JSON config schema + suggested defaults
 scripts/
   validate_config.py    # config validator (no third-party deps)
+  record_human_uat.py   # structured human-UAT resume evidence (no third-party deps)
 ```
 
 ## What the loop guarantees
@@ -30,6 +31,11 @@ scripts/
 - **UAT is mandatory** for workflow-bearing issues, with a canonical screenshot
   artifact strategy that relocates browser-emitted temp screenshots into the
   workspace and records an explicit "emitted-but-not-written" note when it can't.
+- **Human-only UAT gates resume with structured evidence**: when a human
+  unblocks a `human-uat-required` issue, the loop records the supplied evidence
+  fields (sender, subject, timestamp, …) and, when fields are missing, records
+  an operator attestation that names each missing field before continuing —
+  never a silent pass. See `scripts/record_human_uat.py`.
 
 ## Install (global, any machine)
 

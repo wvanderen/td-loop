@@ -33,9 +33,9 @@ Manual agent sessions (a human driving Codex/Pi/OpenCode directly) are not spawn
    - Confirm the exact workflow named by the td issue, not just a nearby smoke test.
 8. If UAT cannot be performed, pause the loop:
    - Add a `human-uat-required` label while preserving existing labels.
-   - Add a comment that names the blocked workflow, attempted automation path, missing capability, and exact human instructions.
+   - Add a comment that names the blocked workflow, attempted automation path, missing capability, exact human instructions, **and the required evidence fields** (copied from the issue's acceptance criteria) so the resume step can record them.
    - Run `td block <id> --reason "human-uat-required: <short reason>"`.
-   - Stop; do not continue to downstream critical-path work until a human unblocks or approves the issue.
+   - Stop; do not continue to downstream critical-path work until a human unblocks or approves the issue. When a human unblocks, follow the structured resume in **Human Escalation Protocol** before continuing.
 9. Capture a handoff with `td handoff <id>` including done, remaining, decisions, and uncertain items.
 10. Submit with `td review <id> --reason "<summary>"` unless the issue should remain blocked.
 11. Spawn or request independent review when risk warrants it, then close only through `td approve` according to the active td review mode.
@@ -98,14 +98,34 @@ Prefer a `scripts/record_uat_evidence.py`-style helper (copy, never move, so fai
 
 ## Human Escalation Protocol
 
-Because td statuses do not include `human_review_required`, encode it as blocked state plus metadata:
+Because td statuses do not include `human_review_required`, encode it as blocked state plus metadata.
+
+### Blocking for human UAT
+
+When UAT cannot be automated, escalate **and name the required evidence** so the human tester knows exactly what to capture. Derive the field list from the issue's acceptance criteria, not a generic template — an email-delivery gate may require `sender`, `subject`, `timestamp`, `tester`, and the visible `package_name`:
 
 ```bash
-td update <id> --labels existing,label,human-uat-required --comment "UAT escalation: <workflow>. Attempted: <tools>. Human steps: <steps>. Resume condition: unblock after pass or reject with findings."
+td update <id> --labels existing,label,human-uat-required --comment "UAT escalation: <workflow>. Attempted: <tools>. Human steps: <steps>. Required evidence: sender, subject, timestamp, tester, package_name. Resume condition: human supplies the named evidence (preferred) or gives a pass/fail instruction recorded as operator attestation naming any missing field."
 td block <id> --reason "human-uat-required: <workflow or blocker>"
 ```
 
-Before resuming a loop, check for blocked `human-uat-required` issues in scope. If any are still blocked, stop and report them instead of working around them. If a human has unblocked, read comments and continue from the same issue before moving down the critical path.
+### Resuming after human UAT (structured evidence)
+
+Before resuming a loop, check for blocked `human-uat-required` issues in scope. If any are still blocked, stop and report them instead of working around them. If a human has unblocked, **do not** continue from a bare pass instruction — record structured human evidence first:
+
+1. Read the block comment to recover the named required-evidence field list.
+2. Capture what the human actually supplied into a manifest at `<uat.artifacts_dir>/<issue_id>/human-uat.json` (schema `td-loop.human-uat/v1`): the supplied `fields`, the list of `missing` required fields, the `result` (`pass`/`fail`), and an `attestation` (`operator`, `instruction`, `at`).
+3. If required fields are missing, the resume is still allowed only when the operator explicitly attests; the manifest **must name each missing field** so the gap is visible to a reviewer rather than buried in a silent pass.
+4. Write the manifest with `scripts/record_human_uat.py` (it appends one JSON line to the shared `evidence.log` alongside it) and gate the resume with `--strict`, which fails when the result is not `pass` or required fields are missing without an attestation.
+5. Then transition td state:
+   ```bash
+   td update <id> --labels <existing-without-human-uat-required> \
+                 --comment "Human UAT resume: result=<pass|fail>. Supplied: <keys>. Missing: <keys or none>. Attestation: <operator> @ <at>: <instruction>. Manifest: <path>"
+   td unblock <id>
+   ```
+6. Reference the manifest path in the `td review --reason` and `td handoff`, then continue down the critical path from the same issue.
+
+The canonical fields for an inbox/email-style gate are `sender`, `subject`, `timestamp`, `tester`, and the visible `package_name`. For other gates, copy the field names straight from the issue's acceptance criteria into both the block comment and the `--required` flags of the resume command.
 
 ## Review Policy
 
