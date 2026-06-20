@@ -1,0 +1,4 @@
+interface:
+  display_name: "TD Loop"
+  short_description: "Work td critical paths with UAT gates"
+  default_prompt: "Use $td-loop to work through this td backlog along the critical path with review and UAT gates."

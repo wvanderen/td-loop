@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# OS / editor
+.DS_Store
+*.swp
+
+# td local workspace (this repo's own backlog + agent scaffolding; not shipped)
+.todos/
+.td-root
+AGENTS.md
+
+# sidecar agent scratch (local run state)
+.sidecar/
+.sidecar-agent
+.sidecar-task
+.sidecar-pr
+.sidecar-start.sh
+.sidecar-base

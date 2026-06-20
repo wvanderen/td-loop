@@ -1,0 +1,158 @@
+---
+name: td-loop
+description: Run a stateful td backlog execution loop along td critical-path output, with structured JSON configuration, implementation/review agent selection, UAT verification gates, browser/computer-use screenshot evidence, and explicit human-escalation pauses when acceptance workflows cannot be verified. Use when Codex needs to work through td epics, tasks, or backlogs systematically with minimal oversight across Codex, Opencode, or Pi agents.
+---
+
+# TD Loop
+
+## Overview
+
+Use `td` as the source of truth for backlog state, ordering, handoffs, reviews, and escalation history. Work down the critical path one issue at a time; never silently skip UAT or continue past an unverified user workflow.
+
+Read `references/config.md` when a JSON config exists or the user asks to create one. Run `scripts/validate_config.py <config.json>` before starting a configured loop.
+
+## Loop Contract
+
+**Ground truth is `td`, not pasted headers.** Before implementing or mutating td state on any issue, read live state with `td context <id>` (or `td show <id> --json`). A "Status:" line embedded in a pasted issue description is informational and may be stale; if it disagrees with td, td wins. If the issue is already closed, do not re-implement it — offer an independent review/verification or ask the user before reopening.
+
+Manual agent sessions (a human driving Codex/Pi/OpenCode directly) are not spawned by td-loop, so the configured reviewer agents do not auto-spawn. In that case the human is the orchestrator and must provide the independent reviewer context (see **Review Policy**).
+
+1. Establish session state with `td status --json`, `td critical-path --json --limit <n>`, and `td list --json` as needed.
+2. Select the next eligible issue from the configured scope:
+   - Prefer the first open issue on the critical path whose dependencies are closed.
+   - Do not start blocked issues.
+   - If an issue is `in_review`, review or close it only when the current session is eligible.
+3. Start the issue with `td start <id>` and set focus with `td focus <id>`.
+4. Read full context with `td show <id> --json --children`; inspect linked files, acceptance criteria, dependencies, and comments.
+5. Implement the smallest complete change that satisfies the issue and preserves the repo's existing style.
+6. Verify the change with tests, linters, and task-specific checks.
+7. Perform UAT for every user-facing or workflow-bearing issue:
+   - Prefer browser automation for web apps.
+   - Use computer use when browser automation is impossible but GUI verification is possible.
+   - Capture or inspect screenshots when visual state matters, and persist them with the artifact strategy below (never leave screenshot evidence only in a temp location).
+   - Confirm the exact workflow named by the td issue, not just a nearby smoke test.
+8. If UAT cannot be performed, pause the loop:
+   - Add a `human-uat-required` label while preserving existing labels.
+   - Add a comment that names the blocked workflow, attempted automation path, missing capability, and exact human instructions.
+   - Run `td block <id> --reason "human-uat-required: <short reason>"`.
+   - Stop; do not continue to downstream critical-path work until a human unblocks or approves the issue.
+9. Capture a handoff with `td handoff <id>` including done, remaining, decisions, and uncertain items.
+10. Submit with `td review <id> --reason "<summary>"` unless the issue should remain blocked.
+11. Spawn or request independent review when risk warrants it, then close only through `td approve` according to the active td review mode.
+12. Refresh `td status --json` and `td critical-path --json`; repeat until the configured stop condition is met.
+
+## Agent Selection
+
+Use the JSON config's `agents` section to decide which agent should act:
+
+- **Codex**: default implementer/orchestrator for repository edits, tests, browser automation, screenshots, and local tool use.
+- **Opencode**: use when the user configures it for implementation or review in repos where Opencode has the needed workspace and command access.
+- **Pi**: use for planning, product judgment, requirements critique, conversational review, and human-readable UAT scripts; do not assume Pi can verify local UI state unless the config explicitly provides that capability.
+
+When spawning a review agent, give it only the issue id, diff/context commands, acceptance criteria, and review task. Ask for a concrete `td approve --record-only` or `td reject` recommendation when the environment supports it. Keep the orchestrator responsible for final loop progression.
+
+In Codex, discover the available multi-agent tool with `tool_search` before spawning. Only delegate when the user request or JSON config authorizes review/parallel agent work. Use Opencode or Pi through `agents.commands`; if an agent is named but unavailable, stop and report the missing capability instead of silently substituting a different reviewer. Prefer command arrays over shell strings, and respect `prompt_mode`:
+
+- `stdin`: pipe or provide the task prompt on standard input.
+- `arg`: append the task prompt as a final command argument.
+- `manual`: print the exact prompt and pause for a human/operator to run it.
+
+## UAT Gate
+
+Treat UAT as mandatory for:
+
+- UI flows, browser flows, CLIs with observable user workflows, auth/onboarding/payment/settings flows, data import/export, notifications, and anything with acceptance criteria phrased as user behavior.
+- Visual layout changes where screenshots can reveal regressions.
+- Cross-agent work where implementation happened outside the current session.
+
+UAT evidence must include:
+
+- Workflow steps executed.
+- Tool used: browser automation, computer use, CLI, or other.
+- Result and artifacts, including screenshot paths when applicable.
+- Known gaps.
+
+Escalate to human review when:
+
+- Login, credentials, external services, local hardware, paid accounts, or permissions block automation.
+- The app cannot be launched or observed from available tools.
+- Screenshot analysis cannot confirm the named workflow.
+- The issue depends on subjective product acceptance that the config marks as human-only.
+
+Record this evidence as a manifest under the canonical artifact directory (see **Screenshot Artifact Strategy** below), not only as prose in the handoff. Reference the manifest path in the `td review --reason` and `td handoff` so a reviewer can find it.
+
+## Screenshot Artifact Strategy
+
+Screenshots must live inside the workspace next to the work they prove. Use one canonical directory, scoped per issue: `<work_dir>/<uat.artifacts_dir>/<issue_id>/`. Default `uat.artifacts_dir` is `uat-artifacts`.
+
+For each UAT workflow, write an `evidence.json` manifest (schema `td-loop.uat-evidence/v1`) capturing: `issue_id`, `workflow`, `tool`, `result`, ordered `steps`, per-screenshot `artifacts`, `notes`, `recorded_at`, and `recorded_by_session`. Each artifact entry records its `label`, `source_path`, whether the tool `tool_emitted` it, whether it was `saved` into the workspace, the saved `path` when true, and a `note`.
+
+Handle the common failure mode where a browser runtime **emits** a screenshot to a temp location (`/tmp`, `/private/tmp`, `$TMPDIR`) but **cannot write it into the workspace**:
+
+1. Copy the screenshot from its temp source into `<uat.artifacts_dir>/<issue_id>/`.
+2. Record `saved: true` with the new workspace `path` and an explicit note that the browser could not write directly and the image was relocated.
+3. If relocation also fails, record `saved: false`, `tool_emitted: true`, and an explicit **emitted-but-not-written** note naming the source path and the failure. Treat the UAT as `unverifiable` and do not submit for review when `uat.block_on_unverifiable` is true.
+4. If an expected screenshot is missing entirely, record `saved: false`, `tool_emitted: false`, with a note that UAT is unverifiable until a screenshot is captured.
+
+Prefer a `scripts/record_uat_evidence.py`-style helper (copy, never move, so failed runs are retryable) and gate review submission with its `--strict` flag. The fixture at `td-loop-skill-validation` ships a reference implementation and a full spec in `docs/ARTIFACT_STRATEGY.md`.
+
+## Human Escalation Protocol
+
+Because td statuses do not include `human_review_required`, encode it as blocked state plus metadata:
+
+```bash
+td update <id> --labels existing,label,human-uat-required --comment "UAT escalation: <workflow>. Attempted: <tools>. Human steps: <steps>. Resume condition: unblock after pass or reject with findings."
+td block <id> --reason "human-uat-required: <workflow or blocker>"
+```
+
+Before resuming a loop, check for blocked `human-uat-required` issues in scope. If any are still blocked, stop and report them instead of working around them. If a human has unblocked, read comments and continue from the same issue before moving down the critical path.
+
+## Review Policy
+
+Spawn an independent review agent when any of these are true:
+
+- The issue touches auth, billing, security, migrations, data loss, permissions, public APIs, or shared infrastructure.
+- The diff is large, cross-cutting, or hard to reason about.
+- The loop config requires review for the issue type, priority, label, or epic.
+- UAT passed but implementation correctness still needs code review.
+
+### Detect the review mode first
+
+Before requesting or spawning review, read the active td review policy and adapt to it:
+
+```bash
+td feature get review_policy_mode     # e.g. review_policy_mode=trusted (source=default)
+```
+
+The mode dictates which close path is available, so do not assume:
+
+- `trusted` (default): `--self-review` is allowed (audited) and `--record-only` is **not**. A fresh independent context can approve+close directly with `td approve <id> --reason "..."`.
+- `delegated`: `--record-only` is allowed and `--self-review` is **not**. A reviewer records `td approve <id> --record-only --reason "..."`; any session then closes with `td approve <id> --reason "using recorded approval"`.
+- `strict` / `balanced`: independent review is enforced by `DifferentReviewerGuard`; never attempt self-review.
+
+If the resolved mode differs from `review.policy_mode` in the config, warn the user and proceed using the **resolved** (actual) mode.
+
+### Independent review is the default, not a last resort
+
+For any non-minor issue, prefer an independent reviewer. When this session has no sub-agent tool (the common case for manual Codex/Pi sessions), a fresh context **is** the independent reviewer — use this recipe instead of falling back to self-review:
+
+1. `td handoff <id>` to capture done / remaining / decisions / uncertain.
+2. Stop and ask the user to start a fresh session or `/clear` for a new context. Do **not** call `td session --new` mid-work to manufacture one.
+3. In the fresh session: `td reviewable`, read the diff and acceptance criteria, then either
+   - `td approve <id> --record-only --reason "..."` (delegated), leaving close to any session, or
+   - `td approve <id> --reason "..."` to approve+close directly (trusted).
+4. Resume in the original context only to finish loop bookkeeping.
+
+Reserve `td approve <id> --self-review --reason "..."` for `--minor` tasks or when the user explicitly opts in. "No sub-agent tool available" by itself is **not** sufficient justification for self-review on non-minor work; request a fresh reviewer context instead.
+
+## Stop Conditions
+
+Stop and summarize when:
+
+- No eligible critical-path issue remains.
+- A human UAT escalation is created or still pending.
+- A configured budget is reached.
+- Tests or UAT fail and the issue needs product or architectural input.
+- Required agent/tool capability is unavailable.
+
+The summary must list issue ids touched, state transitions, verification evidence, UAT result, review status, and next human action if any.
