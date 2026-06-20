@@ -13,18 +13,22 @@ SKILL.md                # skill entry (loaded by Codex)
 agents/openai.yaml      # Codex UI metadata
 references/config.md    # td-loop JSON config schema + suggested defaults
 scripts/
-  validate_config.py    # config validator (no third-party deps)
-  record_human_uat.py   # structured human-UAT resume evidence (no third-party deps)
+  validate_config.py     # config validator (no third-party deps)
+  record_human_uat.py    # structured human-UAT resume evidence (no third-party deps)
+  review_close_path.py   # resolve td review mode → exact approve/close commands
 ```
 
 ## What the loop guarantees
 
 - **`td` is ground truth**, not pasted issue headers. Reads live state before
   acting; never re-implements closed issues.
-- **Detects the active review policy** (`td feature get review_policy_mode`) and
-  uses the close path that actually works for that mode — `--self-review`
+- **Detects the active review policy** (`td feature get review_policy_mode`)
+  and uses the close path that actually works for that mode — `--self-review`
   (trusted), `--record-only` → any-session close (delegated), or the tool-enforced
-  independent-review wall (strict/balanced).
+  independent-review wall (strict/balanced). `scripts/review_close_path.py`
+  resolves the mode and emits the exact reviewer/close command so the loop never
+  asks a reviewer for a flag the database will reject (the validation run hit
+  `--record-only requires review_policy_mode=delegated` in a trusted-mode DB).
 - **Independent review is the default** for non-minor issues, including a
   concrete handoff → fresh-session → approve recipe for sessions with no
   sub-agent tool. Self-review is reserved for `--minor` work.

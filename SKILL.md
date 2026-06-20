@@ -49,7 +49,7 @@ Use the JSON config's `agents` section to decide which agent should act:
 - **Opencode**: use when the user configures it for implementation or review in repos where Opencode has the needed workspace and command access.
 - **Pi**: use for planning, product judgment, requirements critique, conversational review, and human-readable UAT scripts; do not assume Pi can verify local UI state unless the config explicitly provides that capability.
 
-When spawning a review agent, give it only the issue id, diff/context commands, acceptance criteria, and review task. Ask for a concrete `td approve --record-only` or `td reject` recommendation when the environment supports it. Keep the orchestrator responsible for final loop progression.
+When spawning a review agent, give it only the issue id, diff/context commands, acceptance criteria, and the review task. **Do not hard-code `--record-only` into the reviewer's instructions** — `--record-only` is rejected in the default `trusted` mode (`--record-only requires review_policy_mode=delegated`), which is exactly the recovery the validation run had to do. Instead, resolve the close path first (see **Review Policy → Detect the review mode first**) and hand the reviewer the exact approve command that mode accepts. `scripts/review_close_path.py --issue <id> --json` emits it deterministically (reviewer_command + how this session closes), so the reviewer is never asked to run a flag the database will reject; fall back to a concrete `td reject <id>` or the mode-appropriate `td approve` from its output. Keep the orchestrator responsible for final loop progression.
 
 In Codex, discover the available multi-agent tool with `tool_search` before spawning. Only delegate when the user request or JSON config authorizes review/parallel agent work. Use Opencode or Pi through `agents.commands`; if an agent is named but unavailable, stop and report the missing capability instead of silently substituting a different reviewer. Prefer command arrays over shell strings, and respect `prompt_mode`:
 
@@ -138,7 +138,20 @@ Spawn an independent review agent when any of these are true:
 
 ### Detect the review mode first
 
-Before requesting or spawning review, read the active td review policy and adapt to it:
+Before requesting or spawning review, read the active td review policy and adapt to it. The mode dictates which close path is available, so never assume `--record-only` works — the validation run learned this the hard way when it asked a reviewer for `--record-only` in a `trusted`-mode database and got `--record-only requires review_policy_mode=delegated`.
+
+Resolve the path deterministically with the helper, which reads the resolved mode and emits the exact approve/close commands for it:
+
+```bash
+# Human-readable path on stderr:
+python3 scripts/review_close_path.py --issue <id>
+# Machine-readable JSON on stdout (pipe into the reviewer prompt / td comment):
+python3 scripts/review_close_path.py --issue <id> --json
+# Warn + exit non-zero if the config's review.policy_mode disagrees with reality:
+python3 scripts/review_close_path.py --issue <id> --expected <config.review.policy_mode> --json
+```
+
+The equivalent manual read (what the helper runs under the hood):
 
 ```bash
 td feature get review_policy_mode     # e.g. review_policy_mode=trusted (source=default)
@@ -146,11 +159,11 @@ td feature get review_policy_mode     # e.g. review_policy_mode=trusted (source=
 
 The mode dictates which close path is available, so do not assume:
 
-- `trusted` (default): `--self-review` is allowed (audited) and `--record-only` is **not**. A fresh independent context can approve+close directly with `td approve <id> --reason "..."`.
+- `trusted` (default): `--self-review` is allowed (audited) and `--record-only` is **not**. A fresh independent context approves and closes directly with `td approve <id> --reason "..."`. This is the path the loop must hand a reviewer in trusted mode — **not** `--record-only`.
 - `delegated`: `--record-only` is allowed and `--self-review` is **not**. A reviewer records `td approve <id> --record-only --reason "..."`; any session then closes with `td approve <id> --reason "using recorded approval"`.
-- `strict` / `balanced`: independent review is enforced by `DifferentReviewerGuard`; never attempt self-review.
+- `strict` / `balanced`: independent review is enforced by `DifferentReviewerGuard`; never attempt self-review, and `--record-only` is not an escape hatch either.
 
-If the resolved mode differs from `review.policy_mode` in the config, warn the user and proceed using the **resolved** (actual) mode.
+If the resolved mode differs from `review.policy_mode` in the config, warn the user (the helper exits non-zero with a warning) and proceed using the **resolved** (actual) mode. Do not mutate the user's td feature flags to force a match.
 
 ### Independent review is the default, not a last resort
 
@@ -158,9 +171,9 @@ For any non-minor issue, prefer an independent reviewer. When this session has n
 
 1. `td handoff <id>` to capture done / remaining / decisions / uncertain.
 2. Stop and ask the user to start a fresh session or `/clear` for a new context. Do **not** call `td session --new` mid-work to manufacture one.
-3. In the fresh session: `td reviewable`, read the diff and acceptance criteria, then either
-   - `td approve <id> --record-only --reason "..."` (delegated), leaving close to any session, or
-   - `td approve <id> --reason "..."` to approve+close directly (trusted).
+3. In the fresh session: `td reviewable`, read the diff and acceptance criteria, then run the command the resolved mode accepts. Resolve it with `python3 scripts/review_close_path.py --issue <id> --json` rather than guessing — in the **default `trusted` mode** the reviewer approves and closes directly:
+   - `td approve <id> --reason "..."` (trusted, the default — approve+close directly), or
+   - `td approve <id> --record-only --reason "..."` (delegated only — record, leaving close to any session).
 4. Resume in the original context only to finish loop bookkeeping.
 
 Reserve `td approve <id> --self-review --reason "..."` for `--minor` tasks or when the user explicitly opts in. "No sub-agent tool available" by itself is **not** sufficient justification for self-review on non-minor work; request a fresh reviewer context instead.

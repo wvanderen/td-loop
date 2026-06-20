@@ -81,7 +81,7 @@ Use a JSON config when the user wants repeatable backlog execution across epics,
 - `agents.commands.<agent>.prompt_mode`: `stdin`, `arg`, or `manual`.
 - `agents.commands.<agent>.roles`: allowed roles for this command: `orchestrator`, `implementer`, `reviewer`, and/or `advisor`.
 - `review.spawn_review_agent`: `always`, `risk_based`, or `never`.
-- `review.policy_mode`: expected td review policy mode for this project — `strict`, `balanced`, `delegated`, or `trusted` (default `trusted`). The loop reads the actual mode with `td feature get review_policy_mode` and adapts the close path to the **resolved** value; this field documents the expectation and lets the validator warn on a mismatch. The loop does not mutate the user's td feature flags.
+- `review.policy_mode`: expected td review policy mode for this project — `strict`, `balanced`, `delegated`, or `trusted` (default `trusted`). The loop reads the actual mode with `td feature get review_policy_mode` (or `scripts/review_close_path.py --expected <this value> --json`, which warns and exits non-zero on a mismatch) and adapts the close path to the **resolved** value; this field documents the expectation and lets the helper warn on a mismatch. The loop does not mutate the user's td feature flags.
 - `review.prefer_independent_review`: default `true`. For non-minor issues, request an independent reviewer context (fresh session) rather than self-reviewing, even when no sub-agent tool is available.
 - `review.require_independent_for`: priorities, labels, and types that require independent review.
 - `review.allow_self_review_for_minor`: allow td self-review escape hatch for minor work.

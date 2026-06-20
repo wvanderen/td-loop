@@ -1,0 +1,56 @@
+{
+  "schema": "td-loop.uat-evidence/v1",
+  "issue_id": "td-afe55b",
+  "workflow": "Loop detects td review mode before delegated review and emits a mode-correct approve/close path; reviewer is never asked for --record-only in a trusted-mode DB",
+  "tool": "cli",
+  "result": "pass",
+  "steps": [
+    {
+      "label": "compile",
+      "action": "python3 -m py_compile scripts/review_close_path.py",
+      "result": "compiles clean"
+    },
+    {
+      "label": "detect-trusted",
+      "action": "python3 scripts/review_close_path.py --issue td-afe55b --json",
+      "result": "resolved mode=trusted (source=default), matching the validation DB; record_only_supported=false"
+    },
+    {
+      "label": "reviewer-command-avoids-record-only",
+      "action": "assert '--record-only' not in reviewer_command and '--reason' in reviewer_command",
+      "result": "reviewer_command='td approve td-afe55b --reason \"<review summary>\"' — the exact recovery path the validation run had to fall back to"
+    },
+    {
+      "label": "delegated-branch",
+      "action": "python3 scripts/review_close_path.py --mode delegated --issue td-afe55b",
+      "result": "reviewer_command uses --record-only; orchestrator closes with 'using recorded approval'"
+    },
+    {
+      "label": "strict-branch",
+      "action": "python3 scripts/review_close_path.py --mode strict --issue td-afe55b",
+      "result": "independent_review_enforced=true; neither --self-review nor --record-only offered"
+    },
+    {
+      "label": "config-mismatch-warning",
+      "action": "python3 scripts/review_close_path.py --expected delegated --json",
+      "result": "emits WARNING 'config expects delegated but resolved is trusted'; exit code 1"
+    },
+    {
+      "label": "td-unavailable-fallback",
+      "action": "env PATH=/usr/bin:/bin python3 scripts/review_close_path.py --json",
+      "result": "falls back to trusted + warning; does not crash"
+    },
+    {
+      "label": "prose-fix",
+      "action": "grep SKILL.md 'Agent Selection' + 'Detect the review mode first'",
+      "result": "no longer unconditionally asks for --record-only; recipe lists trusted (default) path first"
+    }
+  ],
+  "artifacts": [],
+  "notes": [
+    "UAT is CLI/functional: this issue changes a Codex skill's guidance + adds a no-deps helper script. There is no browser/UI workflow, login, or external service to verify; the failure mode (validation log line 27: '--record-only requires review_policy_mode=delegated') is reproduced and prevented deterministically.",
+    "install.sh uses cp -R of the repo, so scripts/review_close_path.py ships with the skill; executable bit set, consistent with record_human_uat.py and validate_config.py."
+  ],
+  "recorded_at": "2026-06-19T19:52:00-05:00",
+  "recorded_by_session": "ses_88f80b"
+}
