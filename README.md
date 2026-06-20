@@ -56,7 +56,7 @@ scripts/
   asserting against storage that may carry rows from a previous run (the
   validation run's duplicate "Coffee beans" rows). See
   `scripts/browser_uat_isolation.py`.
-- **td writes are sequenced, never concurrent**: reads fan out in parallel, but every state-changing td command (`handoff`, `review`, `approve`, `block`, `unblock`) runs one at a time — a reviewer's `td approve` never races the orchestrator's `td handoff` — and the loop re-reads the affected issue(s) with `td show <id> --json` (and `--children` after a parent/epic auto-cascade) before deciding the next action, so a stale snapshot never drives the next decision (the validation run hit overlapping child/parent state when these ran concurrently). See **Sequencing td Writes** in `SKILL.md`.
+- **td writes are sequenced, never concurrent**: reads fan out in parallel, but every state-changing td command (`handoff`, `review`, `approve`, `block`, `unblock`) runs one at a time — a reviewer's `td approve` never races the orchestrator's `td handoff` — and the loop re-reads the affected issue(s) with `td show <id> --json` (and `td tree <id> --json` after a parent/epic auto-cascade — not `td show <id> --json --children`, which is a silent no-op on td 0.46.0) before deciding the next action, so a stale snapshot never drives the next decision (the validation run hit overlapping child/parent state when these ran concurrently). See **Sequencing td Writes** in `SKILL.md`.
 
 ## Install (global, any machine)
 
