@@ -47,8 +47,21 @@ Manual agent sessions (a human driving Codex/Pi/OpenCode directly) are not spawn
     # exit 0 → safe to review; non-zero → handoff/reason is incomplete
     ```
     Then submit with `td review <id> --reason "<summary>"` unless the issue should remain blocked. See **Handoff Before Review** for the fallback (reason-section) path and the JSON descriptor.
-11. Spawn or request independent review when risk warrants it, then close only through `td approve` according to the active td review mode.
-12. Refresh `td status --json` and `td critical-path --json`; repeat until the configured stop condition is met. This is the loop-level refresh on top of the per-write refresh in **Sequencing td Writes** — each write already re-reads the affected issue (and, after a parent auto-cascade, its descendants via `td tree <id> --json`) before the next action.
+11. Spawn or request independent review when risk warrants it, then close only through `td approve` according to the active td review mode. Submitting an issue for review (`td review <id>`) does **not** end the loop — see **Continuation After Review**.
+12. Refresh `td status --json` and `td critical-path --json`; repeat until the configured stop condition is met (see **Stop Conditions**). This is the loop-level refresh on top of the per-write refresh in **Sequencing td Writes** — each write already re-reads the affected issue (and, after a parent auto-cascade, its descendants via `td tree <id> --json`) before the next action.
+
+## Continuation After Review
+
+`td review <id>` is a per-issue transition, not a loop exit. The failure mode where the agent moves one issue to `in_review`, records a handoff, and returns a final summary — while other eligible critical-path issues remain open — is the generic "task done, return summary" reflex that td-loop must override. After `td review <id>` succeeds and the refreshed `td show <id> --json` confirms `in_review`, do the following **before** emitting any final response:
+
+1. Refresh `td status --json` and `td critical-path --json` (cross-check both — see Loop Contract step 1; `td critical-path --json` has been observed to return `ready_to_start: []` while `td status --json` returned the populated list moments later).
+2. If an independent reviewer is required (by policy, risk, or config) and review capability is unavailable in this session — no sub-agent tool and the user has not opened a fresh reviewer context — pause for review per **Review Policy**. This is the only review-related stop; otherwise do not pause merely because something is `in_review`.
+3. Otherwise, if the just-reviewed issue is merely waiting on review and other eligible (open, unblocked) critical-path issues remain, pick the next one and continue the loop from Loop Contract step 2. Do not treat `in_review` as done-and-summarize.
+4. Stop only when a **Stop Conditions** entry actually holds.
+
+An issue entering `in_review` is **not** a stop condition unless: the configured review policy requires pausing for an independent reviewer that is unavailable, a human UAT escalation is pending, verification failed, the configured budget (`budgets.max_issues_per_loop` / `max_minutes`) is exhausted, or the user instructed a pause. "I submitted it for review" by itself is a signal to keep going, not to summarize.
+
+When review is delegated to a fresh session (the manual-agent recipe in **Review Policy**), the orchestrator's pause to hand off to that reviewer **is** expected — but the orchestrator resumes loop bookkeeping afterward and continues down the critical path; it does not treat the review handoff as the end of the loop.
 
 ## Sequencing td Writes
 
@@ -267,12 +280,16 @@ Reserve `td approve <id> --self-review --reason "..."` for `--minor` tasks or wh
 
 ## Stop Conditions
 
-Stop and summarize when:
+Stop and summarize **only** when one of these holds:
 
-- No eligible critical-path issue remains.
+- No eligible critical-path issue remains — verified against a fresh `td status --json` and `td critical-path --json`, not the pre-review snapshot.
 - A human UAT escalation is created or still pending.
-- A configured budget is reached.
+- A configured budget is reached (`budgets.max_issues_per_loop` or `max_minutes`).
 - Tests or UAT fail and the issue needs product or architectural input.
-- Required agent/tool capability is unavailable.
+- Required agent/tool capability is unavailable — including the case where independent review is required by policy/risk and no eligible reviewer context is or can be made available in this session.
+
+**`in_review` is not a stop condition.** Submitting an issue for review (`td review <id>`) is a per-issue transition; if other eligible issues remain and none of the stops above hold, continue the loop (see **Continuation After Review**). For budget purposes, count an issue toward `max_issues_per_loop` when it is submitted for review or closed, not when it merely enters `in_progress`.
+
+**Pre-summary guard.** Before sending a final response, verify that a documented stop condition above is actually in effect. If the last action was only `td review <id>` (or `td approve`/`td reject`), continue the loop unless: no eligible work remains, a human escalation is pending, verification failed, the budget is exhausted, or review capability is required but unavailable. A "summary" emitted after a single `td review` with eligible work left is a bug, not a completion.
 
 The summary must list issue ids touched, state transitions, verification evidence, UAT result, review status, and next human action if any.
