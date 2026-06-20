@@ -16,6 +16,7 @@ scripts/
   validate_config.py     # config validator (no third-party deps)
   record_human_uat.py    # structured human-UAT resume evidence (no third-party deps)
   review_close_path.py   # resolve td review mode → exact approve/close commands
+  handoff_required.py    # require structured handoff content (done/remaining/decisions/uncertain) before review
 ```
 
 ## What the loop guarantees
@@ -40,6 +41,13 @@ scripts/
   fields (sender, subject, timestamp, …) and, when fields are missing, records
   an operator attestation that names each missing field before continuing —
   never a silent pass. See `scripts/record_human_uat.py`.
+- **Structured handoff before review**: every submission is gated on a handoff
+  whose `done`/`remaining`/`decisions`/`uncertain` fields are populated — not a
+  prose note and not the auto-handoff `td review` creates when none exists
+  (the validation run shipped handoffs with all four fields `None`).
+  `scripts/handoff_required.py` detects whether `td handoff` supports the
+  structured flags and verifies them, falling back to Done/Remaining/Decisions/
+  Uncertain sections in the review reason on older td.
 
 ## Install (global, any machine)
 

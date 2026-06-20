@@ -85,6 +85,7 @@ Use a JSON config when the user wants repeatable backlog execution across epics,
 - `review.prefer_independent_review`: default `true`. For non-minor issues, request an independent reviewer context (fresh session) rather than self-reviewing, even when no sub-agent tool is available.
 - `review.require_independent_for`: priorities, labels, and types that require independent review.
 - `review.allow_self_review_for_minor`: allow td self-review escape hatch for minor work.
+- **Structured handoff before review** (loop guarantee, not a config knob): before every `td review`, the loop records `done`/`remaining`/`decisions`/`uncertain` as `td handoff` fields and gates submission with `scripts/handoff_required.py --issue <id> --strict`. When the installed `td` lacks the structured flags, the same four sections go into the `td review --reason` (or a `td comment`) and the helper verifies them via `--review-reason`. This prevents the empty/auto-generated handoffs the validation run produced.
 - `uat.required`: require UAT before review submission for workflow-bearing issues.
 - `uat.methods`: allowed verification methods. Use `browser`, `computer_use`, `cli`, and/or `manual`.
 - `uat.screenshot_required`: require screenshot evidence for UI/visual flows.

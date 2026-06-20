@@ -36,8 +36,14 @@ Manual agent sessions (a human driving Codex/Pi/OpenCode directly) are not spawn
    - Add a comment that names the blocked workflow, attempted automation path, missing capability, exact human instructions, **and the required evidence fields** (copied from the issue's acceptance criteria) so the resume step can record them.
    - Run `td block <id> --reason "human-uat-required: <short reason>"`.
    - Stop; do not continue to downstream critical-path work until a human unblocks or approves the issue. When a human unblocks, follow the structured resume in **Human Escalation Protocol** before continuing.
-9. Capture a handoff with `td handoff <id>` including done, remaining, decisions, and uncertain items.
-10. Submit with `td review <id> --reason "<summary>"` unless the issue should remain blocked.
+9. Capture a handoff with `td handoff <id>` that populates **all four** structured sections — done, remaining, decisions, uncertain — not a prose `--note`/`-m`. `td review` auto-creates a minimal handoff when none exists; that auto-handoff is not acceptable here because it leaves the structured fields empty and weakens review context (the validation run shipped handoffs whose `done`/`remaining`/`decisions`/`uncertain` were all `None`).
+10. Gate the submission with `scripts/handoff_required.py` before `td review`. It detects whether `td handoff` supports the structured flags and verifies the four sections are populated (or, on older td, that the review reason carries them). Do not submit until it exits 0:
+    ```bash
+    python3 scripts/handoff_required.py --issue <id> --strict                 # structured path
+    python3 scripts/handoff_required.py --issue <id> --review-reason "$SUMMARY" --strict  # only if td lacks the flags
+    # exit 0 → safe to review; non-zero → handoff/reason is incomplete
+    ```
+    Then submit with `td review <id> --reason "<summary>"` unless the issue should remain blocked. See **Handoff Before Review** for the fallback (reason-section) path and the JSON descriptor.
 11. Spawn or request independent review when risk warrants it, then close only through `td approve` according to the active td review mode.
 12. Refresh `td status --json` and `td critical-path --json`; repeat until the configured stop condition is met.
 
@@ -127,6 +133,32 @@ Before resuming a loop, check for blocked `human-uat-required` issues in scope. 
 
 The canonical fields for an inbox/email-style gate are `sender`, `subject`, `timestamp`, `tester`, and the visible `package_name`. For other gates, copy the field names straight from the issue's acceptance criteria into both the block comment and the `--required` flags of the resume command.
 
+## Handoff Before Review
+
+Every handoff must carry all four structured sections — `done`, `remaining`, `decisions`, `uncertain` — populated as td handoff fields, not folded into a prose note. The validation run shipped handoffs whose four fields were all `None` (`td show <id> --json` reported empty structured sections) because implementers used `--note`/`-m` or let `td review` auto-create a minimal handoff. That loss of structure weakens review context and auditability, so gate every submission on it.
+
+`scripts/handoff_required.py` detects whether the installed `td handoff` supports the structured flags (`--done`, `--remaining`, `--decision`, `--uncertain`) and adapts:
+
+- **Structured flags supported (current td):** record the handoff with the four flags and verify before review.
+  ```bash
+  td handoff <id> \
+    --done "<completed item>" \
+    --remaining "<remaining item>" \
+    --decision "<decision made>" \
+    --uncertain "<question/uncertainty>"
+  python3 scripts/handoff_required.py --issue <id> --strict   # exit 0 required
+  ```
+- **Structured flags NOT supported (older td):** the acceptance criteria fall back to the review reason/comment. Bake the four sections into `td review --reason` (or a `td comment`) and verify the planned text before submitting. Provide the reason via `--review-reason`, `--review-reason-file`, or `--review-reason-stdin`:
+  ```bash
+  python3 scripts/handoff_required.py --issue <id> \
+    --review-reason "$SUMMARY" --strict
+  ```
+  The helper prints a pasteable `Done:/Remaining:/Decisions:/Uncertain:` template; the header check accepts both `Decision:` and `Decisions:`.
+
+Machine-readable descriptor on stdout with `--json` (`schema: td-loop.handoff-required/v1`): `structured_flags_supported`, `strategy` (`structured-handoff` | `reason-sections`), `handoff_section_counts`, `missing_sections`, `review_safe`, plus the exact `handoff_command` or `fallback_review_note` to use. Degrades gracefully when `td` is unavailable (assumes unsupported, warns, and routes to the reason-section path) and never mutates td state. `--structured {auto,true,false}` overrides detection for offline/testing; `--handoff-json` reads a handoff object or full `td show --json` dump without touching td.
+
+Run it immediately before `td review <id>` and treat any non-zero exit as "do not submit". Reference the descriptor's `missing_sections` in the handoff fix, not in the review reason of the structured path.
+
 ## Review Policy
 
 Spawn an independent review agent when any of these are true:
@@ -169,7 +201,7 @@ If the resolved mode differs from `review.policy_mode` in the config, warn the u
 
 For any non-minor issue, prefer an independent reviewer. When this session has no sub-agent tool (the common case for manual Codex/Pi sessions), a fresh context **is** the independent reviewer — use this recipe instead of falling back to self-review:
 
-1. `td handoff <id>` to capture done / remaining / decisions / uncertain.
+1. Capture a structured handoff (see **Handoff Before Review**): `td handoff <id> --done "..." --remaining "..." --decision "..." --uncertain "..."`, then gate it with `python3 scripts/handoff_required.py --issue <id> --strict`.
 2. Stop and ask the user to start a fresh session or `/clear` for a new context. Do **not** call `td session --new` mid-work to manufacture one.
 3. In the fresh session: `td reviewable`, read the diff and acceptance criteria, then run the command the resolved mode accepts. Resolve it with `python3 scripts/review_close_path.py --issue <id> --json` rather than guessing — in the **default `trusted` mode** the reviewer approves and closes directly:
    - `td approve <id> --reason "..."` (trusted, the default — approve+close directly), or

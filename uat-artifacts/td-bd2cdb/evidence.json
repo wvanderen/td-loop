@@ -1,0 +1,72 @@
+{
+  "schema": "td-loop.uat-evidence/v1",
+  "issue_id": "td-bd2cdb",
+  "workflow": "Before td review, the loop records done/remaining/decisions/uncertain in the handoff when td supports structured flags, and falls back to baking those sections into the review reason/comment when it does not; empty or auto-generated handoffs are rejected",
+  "tool": "cli",
+  "result": "pass",
+  "steps": [
+    {
+      "label": "compile",
+      "action": "python3 -m py_compile scripts/handoff_required.py",
+      "result": "compiles clean; executable bit set"
+    },
+    {
+      "label": "capability-detection",
+      "action": "python3 scripts/handoff_required.py --json (no --issue)",
+      "result": "structured_flags_supported=true via `td handoff --help` probe; flags={done,remaining,decisions,uncertain}=true; strategy=structured-handoff; review_safe=null (capability-only)"
+    },
+    {
+      "label": "structured-complete-handoff-accepted",
+      "action": "scratch issue with td handoff SCR --done/--remaining/--decision/--uncertain; run handoff_required.py --issue SCR --strict",
+      "result": "counts all=1, missing=[], review_safe=true, exit 0"
+    },
+    {
+      "label": "validation-failure-reproduced-td-afe55b",
+      "action": "python3 scripts/handoff_required.py --issue td-afe55b --strict (real closed validation issue: handoff.done/remaining/decisions/uncertain are all None in td show --json)",
+      "result": "counts all=0, missing=[done,remaining,decisions,uncertain], review_safe=false, exit 1 — the exact failure mode this issue exists to prevent"
+    },
+    {
+      "label": "validation-failure-reproduced-td-033e47",
+      "action": "python3 scripts/handoff_required.py --issue td-033e47 --strict",
+      "result": "review_safe=false, exit 1 — second validation handoff also caught"
+    },
+    {
+      "label": "fallback-reason-complete",
+      "action": "--structured false --review-reason with Done/Remaining/Decisions/Uncertain sections --strict",
+      "result": "strategy=reason-sections; hits all=true; review_safe=true; exit 0"
+    },
+    {
+      "label": "fallback-reason-incomplete",
+      "action": "--structured false --review-reason 'shipped helper, need docs' --strict",
+      "result": "missing sections detected; review_safe=false; exit 1"
+    },
+    {
+      "label": "fallback-no-reason-provided",
+      "action": "--structured false --issue SCR (no --review-reason*) --strict",
+      "result": "review_safe=false + warning naming --review-reason/--review-reason-file/--review-reason-stdin; exit 1"
+    },
+    {
+      "label": "fallback-stdin-and-singular-header",
+      "action": "echo reason | --review-reason-stdin --strict; also 'Decision:' singular header",
+      "result": "both exit 0; singular 'Decision:' header counts as the decisions section"
+    },
+    {
+      "label": "handoff-json-override",
+      "action": "--structured true --handoff-json (raw object and full td-show dump)",
+      "result": "accepts both shapes; partial handoff (remaining empty) and all-None dump both rejected under --strict"
+    },
+    {
+      "label": "td-unavailable-fallback",
+      "action": "env PATH=/usr/bin:/bin python3 scripts/handoff_required.py --json",
+      "result": "structured_flags_supported=false with 'td not found' warning; does not crash; loop falls back to reason-sections path"
+    }
+  ],
+  "artifacts": [],
+  "notes": [
+    "UAT is CLI/functional: this issue adds a no-deps helper script + skill/config/README prose. There is no browser/UI workflow, login, or external service; the failure mode (td show --json handoff.done/remaining/decisions/uncertain all None on td-afe55b and td-033e47) is reproduced and rejected deterministically.",
+    "install.sh uses cp -R of the repo, so scripts/handoff_required.py ships with the skill; executable bit set, consistent with review_close_path.py, record_human_uat.py, and validate_config.py.",
+    "Section-to-flag mapping handled: td CLI flag is --decision (singular) while the td JSON field is decisions (plural); the fallback reason header matches both 'Decision:' and 'Decisions:'."
+  ],
+  "recorded_at": "2026-06-20T01:41:00+00:00",
+  "recorded_by_session": "ses_0ab5aa"
+}
