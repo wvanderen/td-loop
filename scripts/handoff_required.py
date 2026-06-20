@@ -42,7 +42,10 @@ Usage:
   handoff_required.py --issue td-abc1 --structured false --strict
   handoff_required.py --issue td-abc1 --structured true --strict
 
-  # Override the handoff source (testing/offline) without touching td:
+  # Override the handoff source (testing/offline) without touching td.
+  # Accepts a raw handoff object OR a full `td show --json` dump; a raw
+  # object is treated as present from its section content (no
+  # session/timestamp metadata required):
   handoff_required.py --issue td-abc1 --handoff-json handoff.json --strict
 
   -w / --work-dir passes through to `td -w` (default: $TD_WORK_DIR or cwd).
@@ -209,6 +212,7 @@ def build_descriptor(
     source: str,
     issue: str,
     handoff: Optional[dict],
+    handoff_supplied: bool = False,
     reason_text: Optional[str],
     reason_source: str,
     warnings: list[str],
@@ -241,12 +245,31 @@ def build_descriptor(
         descriptor["review_safe"] = None
         return descriptor
 
-    handoff_present = bool(handoff) and bool(handoff.get("timestamp") or handoff.get("session"))
+    # Compute section counts first; presence depends on them for the
+    # --handoff-json (raw-object) path and on td metadata for the
+    # production `td show` path.
     section_counts = {
         section: (_section_count(handoff.get(section)) if handoff else 0)
         for section in required
     }
+    if handoff_supplied:
+        # The handoff came from --handoff-json (testing/offline). A raw
+        # handoff object legitimately lacks session/timestamp metadata, so
+        # derive presence from section content, not metadata: a non-empty
+        # supplied object with at least one populated section counts as
+        # recorded. (A complete raw {done,remaining,decisions,uncertain}
+        # object is review_safe even without a session/timestamp.)
+        handoff_present = bool(handoff) and any(
+            section_counts[s] > 0 for s in required
+        )
+    else:
+        # Production `td show` path: unchanged. Presence comes from the
+        # metadata td stamps when it records a handoff.
+        handoff_present = bool(handoff) and bool(
+            handoff.get("timestamp") or handoff.get("session")
+        )
     descriptor["handoff_present"] = handoff_present
+    descriptor["handoff_supplied"] = handoff_supplied
     descriptor["handoff_section_counts"] = section_counts
     descriptor["handoff_session"] = (handoff or {}).get("session")
     descriptor["review_reason_source"] = reason_source
@@ -389,7 +412,13 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--handoff-json", default="",
-        help="Read the handoff from a JSON file/td-show-json dump instead of `td show` (testing/offline).",
+        help=(
+            "Read the handoff from a JSON file instead of `td show` "
+            "(testing/offline). Accepts a raw handoff object "
+            "{done,remaining,decisions,uncertain} (treated as present from "
+            "section content, no session/timestamp required) or a full "
+            "`td show --json` dump."
+        ),
     )
     parser.add_argument(
         "--review-reason", default="",
@@ -487,6 +516,7 @@ def main(argv: list[str] | None = None) -> int:
         source=source,
         issue=issue,
         handoff=handoff,
+        handoff_supplied=bool(args.handoff_json),
         reason_text=reason_text,
         reason_source=reason_source,
         warnings=warnings,

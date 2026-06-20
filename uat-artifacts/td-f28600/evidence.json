@@ -1,0 +1,78 @@
+{
+  "schema": "td-loop.uat-evidence/v1",
+  "issue_id": "td-f28600",
+  "workflow": "When the handoff is supplied offline via --handoff-json (raw handoff object OR full td-show dump), handoff_presence is derived from the object's section content, not from session/timestamp metadata the raw shape legitimately lacks, so a complete raw {done,remaining,decisions,uncertain} object is review_safe=true; the production `td show` path still derives presence from the session/timestamp metadata td stamps",
+  "tool": "cli",
+  "result": "pass",
+  "steps": [
+    {
+      "label": "compile",
+      "action": "python3 -m py_compile scripts/handoff_required.py",
+      "result": "compiles clean; executable bit unchanged"
+    },
+    {
+      "label": "raw-object-complete-review-safe-true-NEW-AC",
+      "action": "echo a raw object {done,remaining,decisions,uncertain} (NO session/timestamp) to /tmp/raw_complete.json; python3 scripts/handoff_required.py --issue td-test001 --structured true --handoff-json /tmp/raw_complete.json --json --strict; echo exit=$?",
+      "result": "BEFORE FIX this reported review_safe=false with missing_sections=[] (the bug); AFTER FIX: handoff_present=true, handoff_supplied=true, handoff_session=null, missing_sections=[], review_safe=true, exit 0 — the exact AC assertion"
+    },
+    {
+      "label": "raw-object-partial-still-rejected",
+      "action": "raw object with remaining:[] via --handoff-json --structured true --strict",
+      "result": "handoff_present=true (section content present) but missing_sections=[remaining], review_safe=false, exit 1 — partial raw object still gated, no false pass"
+    },
+    {
+      "label": "all-none-full-dump-still-rejected",
+      "action": "full td-show dump wrapper with handoff.session+timestamp but all four sections null via --handoff-json --structured true --strict",
+      "result": "handoff_present=false (no section content to derive presence from), missing_sections=[done,remaining,decisions,uncertain], review_safe=false, exit 1 — preserves the td-bd2cdb 'all-None dump rejected' UAT claim"
+    },
+    {
+      "label": "empty-raw-object-rejected",
+      "action": "echo '{}' via --handoff-json --structured true --strict",
+      "result": "handoff_present=false (non-empty object but no populated section), review_safe=false, exit 1 — a truly empty supplied object is not mistaken for a recorded handoff"
+    },
+    {
+      "label": "production-td-show-path-unchanged-present",
+      "action": "python3 scripts/handoff_required.py --issue td-bd2cdb --structured true --json --strict (real closed issue with handoff.session=ses_0ab5aa, timestamp, and all sections populated)",
+      "result": "handoff_supplied=false, handoff_present=true (from session/timestamp metadata), missing_sections=[], review_safe=true, exit 0 — production metadata-based presence logic untouched"
+    },
+    {
+      "label": "production-td-show-path-unchanged-empty-sections",
+      "action": "python3 scripts/handoff_required.py --issue td-afe55b --structured true --json --strict (real validation issue: handoff has session+timestamp but done/remaining/decisions/uncertain all None)",
+      "result": "handoff_supplied=false, handoff_present=true (metadata), missing_sections=[done,remaining,decisions,uncertain], review_safe=false, exit 1 — the exact failure mode td-bd2cdb exists to prevent, still caught"
+    },
+    {
+      "label": "auto-detect-path-intact",
+      "action": "python3 scripts/handoff_required.py --issue td-bd2cdb --json --strict (--structured auto)",
+      "result": "source='probed (`td handoff --help`)', handoff_supplied=false, review_safe=true, exit 0 — capability probe + production handoff read unaffected"
+    },
+    {
+      "label": "capability-detection-unaffected",
+      "action": "python3 scripts/handoff_required.py --json (no --issue)",
+      "result": "review_safe=null, strategy=structured-handoff; handoff_supplied NOT emitted for the capability-only descriptor (only added once an issue is present) — schema additive only when meaningful"
+    },
+    {
+      "label": "fallback-reason-path-unaffected",
+      "action": "--structured false --review-reason with Done/Remaining/Decisions/Uncertain sections --strict",
+      "result": "handoff_supplied=false, review_safe=true, exit 0 — reason-section fallback path not touched by this change"
+    },
+    {
+      "label": "descriptor-transparency",
+      "action": "grep '\"handoff_supplied\"' across the raw-object and production outputs",
+      "result": "descriptor now exposes handoff_supplied (true for --handoff-json, false for `td show`) so a reviewer can see why handoff_present is computed differently between the two paths"
+    },
+    {
+      "label": "docs-updated",
+      "action": "scripts/handoff_required.py module docstring --handoff-json usage note + argparse --handoff-json help text",
+      "result": "both now state a raw object is accepted and treated as present from section content with no session/timestamp required, reconciling the script with the td-bd2cdb 'accepts both shapes' evidence claim"
+    }
+  ],
+  "artifacts": [],
+  "notes": [
+    "UAT is CLI/functional: this issue changes a no-deps helper script's offline-override branch. There is no browser/UI workflow; the failure mode (a complete raw handoff object reported review_safe=false because handoff_present required session/timestamp) is reproduced-before and asserted-after deterministically with the same flags a reviewer would use.",
+    "Root cause: build_descriptor computed handoff_present = bool(handoff) and (timestamp or session) unconditionally. A raw --handoff-json object carries the four section fields but no td metadata, so it was flagged not-present (review_safe=False) despite missing_sections=[]. Fix: thread handoff_supplied=bool(--handoff-json) into build_descriptor and, when true, derive handoff_present from section content (non-empty object with >=1 populated section). The production `td show` path keeps the metadata-based expression verbatim.",
+    "The fix is intentionally conservative about a truly empty supplied object ({}): it is still reported not-present/review_safe=false, so the gate cannot be satisfied by an empty override.",
+    "Descriptor schema is additive only: handoff_supplied is added solely in the per-issue branch (capability-only descriptor is unchanged), so existing consumers reading review_safe/missing_sections/handoff_present are unaffected."
+  ],
+  "recorded_at": "2026-06-19T21:08:40-05:00",
+  "recorded_by_session": "ses_487a73"
+}

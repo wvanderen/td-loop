@@ -17,6 +17,8 @@ Read `references/config.md` when a JSON config exists or the user asks to create
 
 Manual agent sessions (a human driving Codex/Pi/OpenCode directly) are not spawned by td-loop, so the configured reviewer agents do not auto-spawn. In that case the human is the orchestrator and must provide the independent reviewer context (see **Review Policy**).
 
+**One td write at a time, then refresh.** td reads (`td show`/`context`, `list`, `critical-path`, `status`, `reviewable`, `tree`) may fan out in parallel, but td writes mutate shared state and several cascade from a parent to its descendants — so never have two writes in flight at once: not across sub-agents, not in background shells, and not a reviewer's `td approve` racing the orchestrator's `td handoff`/`td update`. After every write — and after any parent/epic write that auto-cascades to children — re-read the affected issue(s) with `td show <id> --json` (add `--children` when the target is a parent) before choosing the next action; never decide from the pre-write snapshot. Full rule and the write vs. read command lists are in **Sequencing td Writes**.
+
 1. Establish session state with `td status --json`, `td critical-path --json --limit <n>`, and `td list --json` as needed.
 2. Select the next eligible issue from the configured scope:
    - Prefer the first open issue on the critical path whose dependencies are closed.
@@ -46,7 +48,22 @@ Manual agent sessions (a human driving Codex/Pi/OpenCode directly) are not spawn
     ```
     Then submit with `td review <id> --reason "<summary>"` unless the issue should remain blocked. See **Handoff Before Review** for the fallback (reason-section) path and the JSON descriptor.
 11. Spawn or request independent review when risk warrants it, then close only through `td approve` according to the active td review mode.
-12. Refresh `td status --json` and `td critical-path --json`; repeat until the configured stop condition is met.
+12. Refresh `td status --json` and `td critical-path --json`; repeat until the configured stop condition is met. This is the loop-level refresh on top of the per-write refresh in **Sequencing td Writes** — each write already re-reads the affected issue (and its children, after a parent auto-cascade) before the next action.
+
+## Sequencing td Writes
+
+The validation run produced confusing child/parent state because td write commands (`handoff`, `review`, `approve`) overlapped with td's parent→descendant auto-cascade, and the next decision was made from a stale in-memory snapshot. Reads are safe to parallelize; writes are not.
+
+**Rule 1 — Writes are serial.** At most one td write command is in flight at any time, across the orchestrator, any spawned reviewer/implementer agent, and any background shell. A reviewer's `td approve` must not race the orchestrator's `td handoff`/`td update`/`td review`; a delegated close is not "done" until it returns and you have refreshed. Do not pipeline a second write while a first one (yours or an agent's) is still running.
+
+Writes (sequence these, one at a time): `td start`, `focus`, `handoff`, `review`, `approve`, `reject`, `block`, `unblock`, `update`, `comment`, `log`, `close`, `reopen`, `unstart`.
+Reads (may parallelize): `td show`/`context`, `list`, `critical-path`, `status`, `reviewable`, `tree`, `depends-on`/`deps`, `blocked-by`, `feature get`.
+
+**Rule 2 — Refresh after every status-changing write.** After each of `td handoff`, `td review`, `td approve`, `td block`, `td unblock` (and `td reject`), re-read the issue with `td show <id> --json` before deciding the next action — even when the command reported success, because the next decision ("is it `in_review` now?", "is the epic ready to close?", "did the child unblock?") depends on the post-write state, not the snapshot you held before it.
+
+**Rule 3 — A parent write cascades; refresh the children too.** td writes auto-cascade when run on an epic/parent — `td review` cascades to all open/in_progress descendants, and the close flow can touch children through the parent. Whenever a write targets a parent/epic, after it returns, re-read the parent **and** its descendants — `td show <id> --json --children` (or `td tree <id>`) — before deciding anything about a child. Do not issue a second write against a descendant until you have re-read it: the cascade may have already moved it (e.g. into `in_review`), and writing against the old status is exactly the confusing overlap the validation run hit.
+
+**Rule 4 — A write is not done until the refresh agrees.** If the refreshed state does not match what the write was supposed to produce (you ran `td review` but the issue is still `in_progress`, or a child did not cascade as expected), stop and reconcile before the next write — do not stack another write on top of the discrepancy. Re-read, and if td and your expectation still disagree, surface it to the user rather than guessing.
 
 ## Agent Selection
 
