@@ -57,6 +57,51 @@ Use a JSON config when the user wants repeatable backlog execution across epics,
     "human_escalation_label": "human-uat-required",
     "block_on_unverifiable": true
   },
+  "preferences": {
+    "uat": {
+      "requirement_mode": "workflow-bearing",
+      "required_for": {
+        "priorities": ["P0", "P1"],
+        "labels": ["user-facing", "settings"],
+        "types": ["feature", "bug"],
+        "workflows": []
+      },
+      "skip_for": {
+        "labels": ["docs-only"],
+        "types": ["chore"]
+      },
+      "human_only_for": {
+        "labels": ["external-account"],
+        "workflows": ["email delivery", "paid checkout"]
+      },
+      "screenshot_required_for": {
+        "labels": ["ui", "visual-regression"],
+        "workflows": ["onboarding", "settings"]
+      },
+      "evidence_required_fields": ["workflow", "tool", "result", "artifacts", "known_gaps"],
+      "persisted_state": {
+        "default_surface": "auto",
+        "allow_unique_data_fallback": true,
+        "block_on_no_clean_state": true
+      }
+    },
+    "validation": {
+      "require_config_validation": true,
+      "require_handoff_gate": true,
+      "require_uat_evidence_manifest": true,
+      "required_artifacts": ["uat_manifest", "handoff_descriptor"],
+      "commands": [
+        {
+          "name": "config schema",
+          "command": ["python3", "scripts/validate_config.py", "td-loop.config.json"],
+          "run": "before_loop",
+          "required": true
+        }
+      ],
+      "block_on_failure": true,
+      "allow_warnings": false
+    }
+  },
   "budgets": {
     "max_issues_per_loop": 3,
     "max_minutes": 120
@@ -95,6 +140,23 @@ Use a JSON config when the user wants repeatable backlog execution across epics,
 - `uat.artifacts_dir`: canonical directory for screenshot evidence and manifests (default `uat-artifacts`). Relative to `td.work_dir`. One subdirectory per issue id holds `evidence.json`, an append-only `evidence.log`, and the relocated screenshots.
 - `uat.human_escalation_label`: label used when blocking for human UAT.
 - `uat.block_on_unverifiable`: if true, block instead of continuing when UAT cannot be automated.
+- `preferences`: optional project/team preferences that customize how the loop interprets UAT and validation requirements. Core safety rules still apply: preferences may add specificity or stricter gates, but they must not silently skip UAT that is explicitly required by an issue's acceptance criteria.
+- `preferences.uat.requirement_mode`: `default`, `always`, `workflow-bearing`, or `never`. `default` follows `uat.required`; `workflow-bearing` requires UAT when the issue describes user behavior or matches `required_for`; `never` only skips UAT when no acceptance criteria or matching preference requires it.
+- `preferences.uat.required_for`: priorities, labels, types, and/or workflow names that force UAT.
+- `preferences.uat.skip_for`: priorities, labels, types, and/or workflow names that may waive UAT for non-user-facing work. Record the skip reason in the handoff.
+- `preferences.uat.human_only_for`: priorities, labels, types, and/or workflow names that should route directly to the human UAT escalation protocol instead of attempting automation.
+- `preferences.uat.screenshot_required_for`: priorities, labels, types, and/or workflow names that require screenshot evidence even when `uat.screenshot_required` is false.
+- `preferences.uat.evidence_required_fields`: evidence keys the loop should require in UAT manifests or human-UAT block comments.
+- `preferences.uat.persisted_state.default_surface`: default surface to pass to `scripts/browser_uat_isolation.py` for reload-persistence workflows: `auto`, `clean-context`, `reset`, `unique-data`, or `none`. `auto` means the agent chooses the strongest surface the current browser tooling supports.
+- `preferences.uat.persisted_state.allow_unique_data_fallback`: allow the `unique-data` persisted-state strategy when clean context/reset is unavailable. If false, escalate instead.
+- `preferences.uat.persisted_state.block_on_no_clean_state`: block for human UAT when no acceptable persisted-state isolation strategy exists.
+- `preferences.validation.require_config_validation`: run `scripts/validate_config.py <config.json>` before a configured loop starts.
+- `preferences.validation.require_handoff_gate`: run `scripts/handoff_required.py --issue <id> --strict` before review submission.
+- `preferences.validation.require_uat_evidence_manifest`: require workspace UAT evidence manifests for UAT-bearing issues before review submission.
+- `preferences.validation.required_artifacts`: artifacts a reviewer should be able to find before approval. Supported values: `uat_manifest`, `screenshot`, `browser_isolation_manifest`, `human_uat_manifest`, and `handoff_descriptor`.
+- `preferences.validation.commands`: project-specific validation commands. Each entry has `name`, `command` (string array), `run` (`before_loop`, `after_implementation`, `before_review`, or `after_review`), and `required` (boolean).
+- `preferences.validation.block_on_failure`: if true, stop rather than submit for review when a required validation command or artifact check fails.
+- `preferences.validation.allow_warnings`: if false, warnings from required validation checks should be treated as blockers until resolved or explicitly handed off.
 - `budgets.max_issues_per_loop`: stop after this many issues.
 - `budgets.max_minutes`: stop near this elapsed-time budget.
 

@@ -62,6 +62,13 @@ scripts/
   asserting against storage that may carry rows from a previous run (the
   validation run's duplicate "Coffee beans" rows). See
   `scripts/browser_uat_isolation.py`.
+- **Project preferences customize UAT and validation gates**: a top-level
+  `preferences` config block can force or waive UAT by priority/label/type/
+  workflow, route matching workflows to human-only UAT, require screenshots or
+  evidence fields, set persisted-state browser isolation defaults, and declare
+  project validation commands/artifacts. Explicit issue acceptance criteria
+  still win, so preferences never silently skip a named workflow. See
+  `references/config.md`.
 - **td writes are sequenced, never concurrent**: reads fan out in parallel, but every state-changing td command (`handoff`, `review`, `approve`, `block`, `unblock`) runs one at a time — a reviewer's `td approve` never races the orchestrator's `td handoff` — and the loop re-reads the affected issue(s) with `td show <id> --json` (and `td tree <id> --json` after a parent/epic auto-cascade — not `td show <id> --json --children`, which is a silent no-op on td 0.46.0) before deciding the next action, so a stale snapshot never drives the next decision (the validation run hit overlapping child/parent state when these ran concurrently). See **Sequencing td Writes** in `SKILL.md`.
 - **Submitting for review does not end the loop**: `td review <id>` is a per-issue transition, not a loop exit. After an issue enters `in_review`, the loop refreshes `td status`/`td critical-path` and continues to the next eligible issue, stopping only when no work remains, a human UAT escalation is pending, verification failed, the budget is exhausted, or an independent reviewer is required but unavailable (the validation run stopped after a single `td review` while other critical-path issues remained open). See **Continuation After Review** and **Stop Conditions** in `SKILL.md`.
 
@@ -120,3 +127,7 @@ If a target already exists as a copied install, remove it first
 ```sh
 python3 scripts/validate_config.py path/to/td-loop.config.json
 ```
+
+The validator also checks the optional `preferences` block, including UAT
+matching rules, persisted-state browser defaults, required evidence artifacts,
+and project-specific validation command arrays.

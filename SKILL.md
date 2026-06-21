@@ -9,7 +9,7 @@ description: Run a stateful td backlog execution loop along td critical-path out
 
 Use `td` as the source of truth for backlog state, ordering, handoffs, reviews, and escalation history. Work down the critical path one issue at a time; never silently skip UAT or continue past an unverified user workflow.
 
-Read `references/config.md` when a JSON config exists or the user asks to create one. Run `scripts/validate_config.py <config.json>` before starting a configured loop.
+Read `references/config.md` when a JSON config exists, includes `preferences`, or the user asks to create one. Run `scripts/validate_config.py <config.json>` before starting a configured loop.
 
 ## Loop Contract
 
@@ -27,13 +27,14 @@ Manual agent sessions (a human driving Codex/Pi/OpenCode directly) are not spawn
 3. Start the issue with `td start <id>` and set focus with `td focus <id>`.
 4. Read full context with `td show <id> --json`; inspect linked files, acceptance criteria, dependencies, and comments. For a parent/epic, also run `td tree <id> --json` to see descendants — do **not** use `td show <id> --json --children`, which returns parent-only JSON on td 0.46.0 (see **Sequencing td Writes → Rule 3**).
 5. Implement the smallest complete change that satisfies the issue and preserves the repo's existing style.
-6. Verify the change with tests, linters, and task-specific checks.
+6. Verify the change with tests, linters, task-specific checks, and any `preferences.validation.commands` scheduled for `after_implementation`.
 7. Perform UAT for every user-facing or workflow-bearing issue:
    - Prefer browser automation for web apps.
    - Use computer use when browser automation is impossible but GUI verification is possible.
    - Capture or inspect screenshots when visual state matters, and persist them with the artifact strategy below (never leave screenshot evidence only in a temp location).
    - For workflows that assert state survives a reload (localStorage/sessionStorage/IndexedDB), resolve a clean-state isolation strategy first and record it — see **Persisted-State Browser UAT**.
    - Confirm the exact workflow named by the td issue, not just a nearby smoke test.
+   - Apply `preferences.uat` before deciding whether UAT is required, human-only, screenshot-bearing, or eligible for a persisted-state fallback — see **Preferences Config**.
 8. If UAT cannot be performed, pause the loop:
    - Add a `human-uat-required` label while preserving existing labels.
    - Add a comment that names the blocked workflow, attempted automation path, missing capability, exact human instructions, **and the required evidence fields** (copied from the issue's acceptance criteria) so the resume step can record them.
@@ -118,6 +119,38 @@ Escalate to human review when:
 - The issue depends on subjective product acceptance that the config marks as human-only.
 
 Record this evidence as a manifest under the canonical artifact directory (see **Screenshot Artifact Strategy** below), not only as prose in the handoff. Reference the manifest path in the `td review --reason` and `td handoff` so a reviewer can find it.
+
+## Preferences Config
+
+A configured loop may include a top-level `preferences` object. Preferences tune how the skill applies UAT and validation gates for a project; they do not erase explicit issue acceptance criteria or the loop's safety floor. If an issue says a workflow must be verified, do not skip that workflow because a preference is broad or ambiguous. When preferences waive or reroute a gate, record the reason in the handoff.
+
+Validate preferences with the rest of the config:
+
+```bash
+python3 scripts/validate_config.py <config.json>
+```
+
+### UAT preferences
+
+Resolve UAT in this order:
+
+1. Issue acceptance criteria and comments: explicit UAT or human evidence requirements win.
+2. `preferences.uat.human_only_for`: matching priorities, labels, types, or workflow names route directly to the human escalation protocol.
+3. `preferences.uat.required_for`: matching priorities, labels, types, or workflow names force UAT.
+4. `preferences.uat.requirement_mode`: `always` requires UAT for every issue; `workflow-bearing` requires it for user-facing/workflow-bearing changes; `never` may skip only non-user-facing work with no explicit UAT requirement; `default` follows `uat.required`.
+5. `preferences.uat.skip_for`: may waive UAT for non-user-facing work. Do not use it to bypass a named workflow or acceptance criterion.
+
+Use `preferences.uat.screenshot_required_for` to make screenshot evidence mandatory for matching workflows even when the base `uat.screenshot_required` is false. Use `preferences.uat.evidence_required_fields` when writing automated UAT manifests and when blocking for human UAT so the required evidence travels with the issue instead of living only in operator memory.
+
+For persisted-state browser workflows, `preferences.uat.persisted_state.default_surface` supplies the default `--surface` for `scripts/browser_uat_isolation.py` when the current browser tool capability is known. `auto` means choose the strongest available surface. If `allow_unique_data_fallback` is false, do not use the `unique-data` strategy; escalate instead. If `block_on_no_clean_state` is true, no acceptable clean-state path is a blocker.
+
+### Validation preferences
+
+Run `preferences.validation.commands` at their configured stage (`before_loop`, `after_implementation`, `before_review`, or `after_review`). Commands are arrays, not shell strings. A required command failure blocks progression when `preferences.validation.block_on_failure` is true. If `allow_warnings` is false, treat warnings from required validation as blockers unless the user explicitly accepts the risk and the handoff records it.
+
+`preferences.validation.require_config_validation`, `require_handoff_gate`, and `require_uat_evidence_manifest` control whether the corresponding gates must run in configured loops. The default expectation remains strict: validate config before the loop, require structured handoff before review, and require UAT evidence manifests for UAT-bearing issues.
+
+`preferences.validation.required_artifacts` names artifacts a reviewer must be able to find before approval: `uat_manifest`, `screenshot`, `browser_isolation_manifest`, `human_uat_manifest`, and/or `handoff_descriptor`.
 
 ## Screenshot Artifact Strategy
 

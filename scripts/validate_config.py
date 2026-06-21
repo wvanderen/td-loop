@@ -14,6 +14,16 @@ REVIEW_POLICY_MODES = {"strict", "balanced", "delegated", "trusted"}
 UAT_METHODS = {"browser", "computer_use", "cli", "manual"}
 PROMPT_MODES = {"stdin", "arg", "manual"}
 AGENT_ROLES = {"orchestrator", "implementer", "reviewer", "advisor"}
+UAT_REQUIREMENT_MODES = {"default", "always", "workflow-bearing", "never"}
+PERSISTED_STATE_SURFACES = {"auto", "clean-context", "reset", "unique-data", "none"}
+VALIDATION_RUN_STAGES = {"before_loop", "after_implementation", "before_review", "after_review"}
+VALIDATION_ARTIFACTS = {
+    "uat_manifest",
+    "screenshot",
+    "browser_isolation_manifest",
+    "human_uat_manifest",
+    "handoff_descriptor",
+}
 
 
 def require(condition: bool, message: str, errors: list[str]) -> None:
@@ -23,6 +33,29 @@ def require(condition: bool, message: str, errors: list[str]) -> None:
 
 def is_string_list(value: object) -> bool:
     return isinstance(value, list) and all(isinstance(item, str) for item in value)
+
+
+def require_string_list_fields(prefix: str, value: object, keys: tuple[str, ...], errors: list[str]) -> None:
+    require(isinstance(value, dict), f"{prefix} must be an object", errors)
+    if not isinstance(value, dict):
+        return
+    for key in keys:
+        require(is_string_list(value.get(key, [])), f"{prefix}.{key} must be a string array", errors)
+
+
+def validate_preference_rules(prefix: str, value: object, errors: list[str]) -> None:
+    require_string_list_fields(prefix, value, ("priorities", "labels", "types", "workflows"), errors)
+
+
+def validate_validation_command(prefix: str, value: object, errors: list[str]) -> None:
+    require(isinstance(value, dict), f"{prefix} must be an object", errors)
+    if not isinstance(value, dict):
+        return
+    require(isinstance(value.get("name"), str) and bool(value.get("name", "").strip()), f"{prefix}.name must be a non-empty string", errors)
+    require(is_string_list(value.get("command")) and bool(value.get("command")), f"{prefix}.command must be a non-empty string array", errors)
+    run = value.get("run", "before_review")
+    require(run in VALIDATION_RUN_STAGES, f"{prefix}.run must be one of: {', '.join(sorted(VALIDATION_RUN_STAGES))}", errors)
+    require(isinstance(value.get("required", True), bool), f"{prefix}.required must be boolean", errors)
 
 
 def main() -> int:
@@ -116,6 +149,41 @@ def main() -> int:
         require(isinstance(uat.get("artifacts_dir", "uat-artifacts"), str), "uat.artifacts_dir must be a string", errors)
         require(isinstance(uat.get("human_escalation_label", "human-uat-required"), str), "uat.human_escalation_label must be a string", errors)
         require(isinstance(uat.get("block_on_unverifiable", True), bool), "uat.block_on_unverifiable must be boolean", errors)
+
+    preferences = data.get("preferences", {})
+    require(isinstance(preferences, dict), "preferences must be an object", errors)
+    if isinstance(preferences, dict):
+        pref_uat = preferences.get("uat", {})
+        require(isinstance(pref_uat, dict), "preferences.uat must be an object", errors)
+        if isinstance(pref_uat, dict):
+            mode = pref_uat.get("requirement_mode", "default")
+            require(mode in UAT_REQUIREMENT_MODES, "preferences.uat.requirement_mode must be default, always, workflow-bearing, or never", errors)
+            for key in ("required_for", "skip_for", "human_only_for", "screenshot_required_for"):
+                validate_preference_rules(f"preferences.uat.{key}", pref_uat.get(key, {}), errors)
+            require(is_string_list(pref_uat.get("evidence_required_fields", [])), "preferences.uat.evidence_required_fields must be a string array", errors)
+            persisted = pref_uat.get("persisted_state", {})
+            require(isinstance(persisted, dict), "preferences.uat.persisted_state must be an object", errors)
+            if isinstance(persisted, dict):
+                surface = persisted.get("default_surface", "auto")
+                require(surface in PERSISTED_STATE_SURFACES, "preferences.uat.persisted_state.default_surface must be auto, clean-context, reset, unique-data, or none", errors)
+                require(isinstance(persisted.get("allow_unique_data_fallback", True), bool), "preferences.uat.persisted_state.allow_unique_data_fallback must be boolean", errors)
+                require(isinstance(persisted.get("block_on_no_clean_state", True), bool), "preferences.uat.persisted_state.block_on_no_clean_state must be boolean", errors)
+
+        validation = preferences.get("validation", {})
+        require(isinstance(validation, dict), "preferences.validation must be an object", errors)
+        if isinstance(validation, dict):
+            for key in ("require_config_validation", "require_handoff_gate", "require_uat_evidence_manifest", "block_on_failure", "allow_warnings"):
+                require(isinstance(validation.get(key, True), bool), f"preferences.validation.{key} must be boolean", errors)
+            artifacts = validation.get("required_artifacts", [])
+            require(is_string_list(artifacts), "preferences.validation.required_artifacts must be a string array", errors)
+            if is_string_list(artifacts):
+                unknown = sorted(set(artifacts) - VALIDATION_ARTIFACTS)
+                require(not unknown, f"preferences.validation.required_artifacts has unsupported artifacts: {', '.join(unknown)}", errors)
+            commands = validation.get("commands", [])
+            require(isinstance(commands, list), "preferences.validation.commands must be an array", errors)
+            if isinstance(commands, list):
+                for index, command in enumerate(commands):
+                    validate_validation_command(f"preferences.validation.commands[{index}]", command, errors)
 
     budgets = data.get("budgets", {})
     require(isinstance(budgets, dict), "budgets must be an object", errors)
