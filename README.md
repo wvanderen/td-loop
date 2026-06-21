@@ -52,6 +52,9 @@ scripts/
   `scripts/handoff_required.py` detects whether `td handoff` supports the
   structured flags and verifies them, falling back to Done/Remaining/Decisions/
   Uncertain sections in the review reason on older td.
+- **Detailed commit before review**: agents commit completed implementation work
+  before `td review`, using a commit subject/body that explains what changed,
+  how it was verified, and any known follow-up or risk.
 - **Persisted-state browser UAT starts from a clean state**: reload-persistence
   workflows (localStorage/sessionStorage/IndexedDB) resolve the strongest
   isolation the browser surface supports — clean-context, storage reset, or

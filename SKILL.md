@@ -39,16 +39,17 @@ Manual agent sessions (a human driving Codex/Pi/OpenCode directly) are not spawn
    - Add a comment that names the blocked workflow, attempted automation path, missing capability, exact human instructions, **and the required evidence fields** (copied from the issue's acceptance criteria) so the resume step can record them.
    - Run `td block <id> --reason "human-uat-required: <short reason>"`.
    - Stop; do not continue to downstream critical-path work until a human unblocks or approves the issue. When a human unblocks, follow the structured resume in **Human Escalation Protocol** before continuing.
-9. Capture a handoff with `td handoff <id>` that populates **all four** structured sections — done, remaining, decisions, uncertain — not a prose `--note`/`-m`. `td review` auto-creates a minimal handoff when none exists; that auto-handoff is not acceptable here because it leaves the structured fields empty and weakens review context (the validation run shipped handoffs whose `done`/`remaining`/`decisions`/`uncertain` were all `None`).
-10. Gate the submission with `scripts/handoff_required.py` before `td review`. It detects whether `td handoff` supports the structured flags and verifies the four sections are populated (or, on older td, that the review reason carries them). Do not submit until it exits 0:
+9. Commit the completed implementation before submitting to review. Use a detailed commit message with a concise subject and a body that describes what changed, how it was verified, and any known follow-up or risk. Do not run `td review` against uncommitted implementation work.
+10. Capture a handoff with `td handoff <id>` that populates **all four** structured sections — done, remaining, decisions, uncertain — not a prose `--note`/`-m`. `td review` auto-creates a minimal handoff when none exists; that auto-handoff is not acceptable here because it leaves the structured fields empty and weakens review context (the validation run shipped handoffs whose `done`/`remaining`/`decisions`/`uncertain` were all `None`).
+11. Gate the submission with `scripts/handoff_required.py` before `td review`, plus any `preferences.validation.commands` scheduled for `before_review` and any required artifacts from `preferences.validation.required_artifacts`. `handoff_required.py` detects whether `td handoff` supports the structured flags and verifies the four sections are populated (or, on older td, that the review reason carries them). Do not submit until required gates exit 0:
     ```bash
     python3 scripts/handoff_required.py --issue <id> --strict                 # structured path
     python3 scripts/handoff_required.py --issue <id> --review-reason "$SUMMARY" --strict  # only if td lacks the flags
     # exit 0 → safe to review; non-zero → handoff/reason is incomplete
     ```
     Then submit with `td review <id> --reason "<summary>"` unless the issue should remain blocked. See **Handoff Before Review** for the fallback (reason-section) path and the JSON descriptor.
-11. Spawn or request independent review when risk warrants it, then close only through `td approve` according to the active td review mode. Submitting an issue for review (`td review <id>`) does **not** end the loop — see **Continuation After Review**.
-12. Refresh `td status --json` and `td critical-path --json`; repeat until the configured stop condition is met (see **Stop Conditions**). This is the loop-level refresh on top of the per-write refresh in **Sequencing td Writes** — each write already re-reads the affected issue (and, after a parent auto-cascade, its descendants via `td tree <id> --json`) before the next action.
+12. Spawn or request independent review when risk warrants it, then close only through `td approve` according to the active td review mode. Submitting an issue for review (`td review <id>`) does **not** end the loop — see **Continuation After Review**.
+13. Refresh `td status --json` and `td critical-path --json`; repeat until the configured stop condition is met (see **Stop Conditions**). This is the loop-level refresh on top of the per-write refresh in **Sequencing td Writes** — each write already re-reads the affected issue (and, after a parent auto-cascade, its descendants via `td tree <id> --json`) before the next action.
 
 ## Continuation After Review
 
@@ -203,6 +204,8 @@ The canonical fields for an inbox/email-style gate are `sender`, `subject`, `tim
 
 ## Handoff Before Review
 
+Before recording the handoff or running `td review`, commit the completed work. The commit message is part of the review packet: use a descriptive subject and a body that records the implementation summary, verification performed, and any known follow-up or risk. If the working tree still has implementation changes that belong to the issue, the issue is not ready for `td review`.
+
 Every handoff must carry all four structured sections — `done`, `remaining`, `decisions`, `uncertain` — populated as td handoff fields, not folded into a prose note. The validation run shipped handoffs whose four fields were all `None` (`td show <id> --json` reported empty structured sections) because implementers used `--note`/`-m` or let `td review` auto-create a minimal handoff. That loss of structure weakens review context and auditability, so gate every submission on it.
 
 `scripts/handoff_required.py` detects whether the installed `td handoff` supports the structured flags (`--done`, `--remaining`, `--decision`, `--uncertain`) and adapts:
@@ -269,7 +272,7 @@ If the resolved mode differs from `review.policy_mode` in the config, warn the u
 
 For any non-minor issue, prefer an independent reviewer. When this session has no sub-agent tool (the common case for manual Codex/Pi sessions), a fresh context **is** the independent reviewer — use this recipe instead of falling back to self-review:
 
-1. Capture a structured handoff (see **Handoff Before Review**): `td handoff <id> --done "..." --remaining "..." --decision "..." --uncertain "..."`, then gate it with `python3 scripts/handoff_required.py --issue <id> --strict`.
+1. Commit the completed implementation with a detailed message, then capture a structured handoff (see **Handoff Before Review**): `td handoff <id> --done "..." --remaining "..." --decision "..." --uncertain "..."`, and gate it with `python3 scripts/handoff_required.py --issue <id> --strict`.
 2. Stop and ask the user to start a fresh session or `/clear` for a new context. Do **not** call `td session --new` mid-work to manufacture one.
 3. In the fresh session: `td reviewable`, read the diff and acceptance criteria, then run the command the resolved mode accepts. Resolve it with `python3 scripts/review_close_path.py --issue <id> --json` rather than guessing — in the **default `trusted` mode** the reviewer approves and closes directly:
    - `td approve <id> --reason "..."` (trusted, the default — approve+close directly), or
